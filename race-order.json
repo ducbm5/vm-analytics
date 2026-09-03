@@ -1,12 +1,13 @@
 {
   "order": [
+    "HP26",
+    "DN26",
     "NA26",
     "QN26",
     "VT26",
     "NT26",
     "PT26",
     "SS26",
-    "DN26",
     "CT26",
     "CG26",
     "OM24",
@@ -27,9 +28,9 @@
   ],
   "googleScriptUrl": "https://script.google.com/macros/s/AKfycbxxP1amqLWOVLWEwAYNV5t74PN-iAEoK320DgTdhxtD0F-UNRYH7S1Xt6bISPBsRiGE/exec",
   "googleSheetTsvUrl": "",
-  "updatedAt": "2026-09-03T06:55:20.895Z",
+  "updatedAt": "2026-09-03T07:12:09.413Z",
   "googleSheetSyncResult": {
     "success": true,
-    "message": "Đã lưu thành công 24"
+    "message": "Đã lưu thành công 25"
   }
 }

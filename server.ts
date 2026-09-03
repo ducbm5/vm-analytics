@@ -63,6 +63,17 @@ async function startServer() {
         } catch (tsvErr: any) {
           console.warn("Could not fetch race order from Google Sheet TSV:", tsvErr.message);
         }
+      } else if (googleScriptUrl && typeof googleScriptUrl === "string" && googleScriptUrl.trim().startsWith("http")) {
+        // Automatically check Google Apps Script if connected
+        try {
+          const scriptRes = await axios.get(googleScriptUrl.trim(), { timeout: 4000, maxRedirects: 5 });
+          if (scriptRes.data && Array.isArray(scriptRes.data.order) && scriptRes.data.order.length > 0) {
+            order = scriptRes.data.order.map((c: any) => String(c).trim().toUpperCase()).filter(Boolean);
+            syncSource = "google_apps_script";
+          }
+        } catch (scriptErr: any) {
+          // Silent fallback to saved file order
+        }
       }
 
       if (Array.isArray(order) && order.length > 0) {
