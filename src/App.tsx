@@ -1,5 +1,7 @@
-import React, { useEffect, useState, useMemo, useRef } from "react";
+import React, { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import axios from "axios";
 import { Participant } from "./types";
+import { RaceOrderSettingsModal, DEFAULT_RACE_ORDER } from "@/components/RaceOrderSettingsModal";
 import { 
   Card, 
   CardContent, 
@@ -41,6 +43,7 @@ import {
   Activity, 
   DollarSign,
   Trash2,
+  RefreshCw,
   PieChart as PieIcon,
   Globe,
   MapPin,
@@ -49,7 +52,8 @@ import {
   Sparkles,
   ArrowUpDown,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  SlidersHorizontal
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import ReactMarkdown from "react-markdown";
@@ -155,27 +159,16 @@ const SortableHead: React.FC<SortableHeadProps> = ({
   );
 };
 
-const TOP_RACES = ["NA26", "QN26", "VT26", "NT26", "PT26"];
-
-const BASE_RACE_LIST = [
-  "HCM25", "HUE25", "AS25", "NA25", "HL25", "QN25", "DN25", "NT25", "CT25",
-  "HN25", "HP25", "AS26", "HCM26", "HUE26", "OM24", "CG26", "CT26", "DN26", "SS26"
-];
-
-const CUSTOM_RACE_ORDER = [
-  ...TOP_RACES,
-  ...[...BASE_RACE_LIST].reverse().filter(r => !TOP_RACES.includes(r))
-];
-
-const getRaceIndex = (raceName: string): number => {
+const getRaceIndexWithList = (raceName: string, orderList: string[]): number => {
   const upper = raceName.toUpperCase().trim();
-  const idx = CUSTOM_RACE_ORDER.indexOf(upper);
+  const list = orderList && orderList.length > 0 ? orderList : DEFAULT_RACE_ORDER;
+  const idx = list.indexOf(upper);
   return idx !== -1 ? idx : 999;
 };
 
-const compareRaces = (raceA: string, raceB: string, dir: "asc" | "desc" = "asc"): number => {
-  const idxA = getRaceIndex(raceA);
-  const idxB = getRaceIndex(raceB);
+const compareRacesWithList = (raceA: string, raceB: string, orderList: string[], dir: "asc" | "desc" = "asc"): number => {
+  const idxA = getRaceIndexWithList(raceA, orderList);
+  const idxB = getRaceIndexWithList(raceB, orderList);
 
   let diff = 0;
   if (idxA !== idxB) {
@@ -293,6 +286,7 @@ export default function App() {
   const [loadedData, setLoadedData] = useState<Record<string, Participant[]>>({});
   const [loading, setLoading] = useState(true);
   const [loadingYear, setLoadingYear] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
   // Auth State
@@ -314,6 +308,52 @@ export default function App() {
   const data = useMemo(() => {
     return Object.values(loadedData).flat();
   }, [loadedData]);
+
+  // Synchronized Cross-Device Race Ordering
+  const [raceOrder, setRaceOrder] = useState<string[]>(DEFAULT_RACE_ORDER);
+  const [raceOrderUpdatedAt, setRaceOrderUpdatedAt] = useState<string | null>(null);
+  const [isRaceOrderModalOpen, setIsRaceOrderModalOpen] = useState(false);
+
+  const fetchRaceOrder = async () => {
+    try {
+      const res = await axios.get("/api/race-order");
+      if (res.data?.order && Array.isArray(res.data.order)) {
+        setRaceOrder(res.data.order);
+        setRaceOrderUpdatedAt(res.data.updatedAt || null);
+      }
+    } catch (err) {
+      console.error("Lỗi lấy thứ tự giải từ máy chủ:", err);
+    }
+  };
+
+  const handleSaveRaceOrder = async (newOrder: string[]) => {
+    const res = await axios.post("/api/race-order", { order: newOrder });
+    if (res.data?.order && Array.isArray(res.data.order)) {
+      setRaceOrder(res.data.order);
+      setRaceOrderUpdatedAt(res.data.updatedAt || null);
+    }
+  };
+
+  const compareRaces = useCallback((raceA: string, raceB: string, dir: "asc" | "desc" = "asc"): number => {
+    return compareRacesWithList(raceA, raceB, raceOrder, dir);
+  }, [raceOrder]);
+
+  const allDetectedRaces = useMemo(() => {
+    const set = new Set<string>();
+    Object.values(loadedData).forEach(arr => {
+      arr.forEach(p => {
+        if (p.RACE) set.add(p.RACE.toUpperCase().trim());
+      });
+    });
+    data.forEach(p => {
+      if (p.RACE) set.add(p.RACE.toUpperCase().trim());
+    });
+    return Array.from(set);
+  }, [loadedData, data]);
+
+  useEffect(() => {
+    fetchRaceOrder();
+  }, []);
 
   // AI Analysis State
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
@@ -434,6 +474,31 @@ export default function App() {
       } finally {
         setLoadingYear(null);
       }
+    }
+  };
+
+  const handleRefreshData = async () => {
+    setIsRefreshing(true);
+    try {
+      const loadedKeys = Object.keys(loadedData);
+      const keysToRefresh = loadedKeys.length > 0 ? loadedKeys : ["2026"];
+      
+      const [refreshedResults] = await Promise.all([
+        Promise.all(keysToRefresh.map(async (key) => ({ key, data: await fetchYearData(key) }))),
+        fetchRaceOrder()
+      ]);
+
+      setLoadedData(prev => {
+        const updated = { ...prev };
+        refreshedResults.forEach(item => {
+          updated[item.key] = item.data;
+        });
+        return updated;
+      });
+    } catch (err) {
+      console.error("Lỗi cập nhật dữ liệu:", err);
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -983,7 +1048,7 @@ export default function App() {
     });
 
     return items;
-  }, [revenueStats, revSort]);
+  }, [revenueStats, revSort, compareRaces]);
 
   const sortedStageData = useMemo(() => {
     const items = Object.entries(bibStageStats).map(([race, stages]) => {
@@ -1010,7 +1075,7 @@ export default function App() {
     });
 
     return items;
-  }, [bibStageStats, stageSort]);
+  }, [bibStageStats, stageSort, compareRaces]);
 
   const sortedBibDistData = useMemo(() => {
     const items = Object.entries(bibDistanceStats).map(([race, dists]) => {
@@ -1037,7 +1102,7 @@ export default function App() {
     });
 
     return items;
-  }, [bibDistanceStats, distSort]);
+  }, [bibDistanceStats, distSort, compareRaces]);
 
   const sortedNationalityData = useMemo(() => {
     const items = [...nationalityStats];
@@ -1223,7 +1288,7 @@ export default function App() {
       }
     });
     return Array.from(names).sort((a, b) => compareRaces(a, b, 'asc'));
-  }, [data, selectedYear]);
+  }, [data, selectedYear, compareRaces]);
 
   const allYears = useMemo(() => {
     const years = new Set<string>(["2026", "2025", "2024", "2023", "2022", "2021", "2020", "2019"]);
@@ -1375,13 +1440,35 @@ export default function App() {
             <span className="inline-block w-2.5 h-2.5 bg-[#ee3260]" />
             MARATHON REVENUE & PARTICIPANT ANALYTICS
           </span>
-          <Button 
-            variant="ghost" 
-            onClick={handleLogout} 
-            className="text-[10px] font-mono uppercase opacity-60 hover:opacity-100 border border-[#141414]/30 rounded-none h-7 px-3 bg-white/40"
-          >
-            Logout
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsRaceOrderModalOpen(true)}
+              className="text-[10px] font-mono uppercase border border-[#141414] rounded-none h-7 px-3 bg-white text-[#141414] hover:bg-[#141414] hover:text-white transition-colors flex items-center gap-1.5 font-bold cursor-pointer"
+              title="Cài đặt thứ tự các giải chạy (Đồng bộ máy chủ)"
+            >
+              <SlidersHorizontal className="w-3 h-3 text-[#ee3260]" />
+              Thứ tự giải
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRefreshData}
+              disabled={isRefreshing || loading}
+              className="text-[10px] font-mono uppercase border border-[#141414] rounded-none h-7 px-3 bg-[#141414] text-white hover:bg-[#ee3260] hover:text-white transition-colors flex items-center gap-1.5 font-bold cursor-pointer"
+            >
+              <RefreshCw className={cn("w-3 h-3", isRefreshing && "animate-spin")} />
+              {isRefreshing ? "Đang cập nhật..." : "Cập nhật"}
+            </Button>
+            <Button 
+              variant="ghost" 
+              onClick={handleLogout} 
+              className="text-[10px] font-mono uppercase opacity-60 hover:opacity-100 border border-[#141414]/30 rounded-none h-7 px-3 bg-white/40 cursor-pointer"
+            >
+              Logout
+            </Button>
+          </div>
         </div>
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
           <div>
@@ -1515,15 +1602,25 @@ export default function App() {
           <span className="font-mono text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 text-[#141414]">
             <span>⚙️</span> DATA FILTERS
           </span>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <span className="font-mono text-[10px] font-bold text-[#141414]">
               Showing: {filteredData.length.toLocaleString()} / {data.length.toLocaleString()} Runners
             </span>
             <Button 
               variant="outline" 
               size="sm" 
+              onClick={handleRefreshData}
+              disabled={isRefreshing || loading}
+              className="rounded-none border-[#141414] font-mono text-[10px] uppercase font-bold gap-1.5 h-6 px-2.5 bg-[#141414] text-white hover:bg-[#ee3260] hover:text-white transition-colors cursor-pointer"
+            >
+              <RefreshCw className={cn("w-3 h-3", isRefreshing && "animate-spin")} />
+              {isRefreshing ? "Đang cập nhật..." : "Cập nhật"}
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm" 
               onClick={resetFilters}
-              className="rounded-none border-[#141414] font-mono text-[10px] uppercase gap-1.5 h-6 px-2 hover:bg-[#141414] hover:text-[#f2ece2] transition-colors"
+              className="rounded-none border-[#141414] font-mono text-[10px] uppercase gap-1.5 h-6 px-2 hover:bg-[#141414] hover:text-[#f2ece2] transition-colors cursor-pointer"
             >
               <Trash2 className="w-3 h-3" /> Reset Filters
             </Button>
@@ -2594,6 +2691,15 @@ export default function App() {
           <span>Auto-Sync: Active</span>
         </div>
       </footer>
+      {/* Race Order Settings Modal (Cross-Device Synchronized) */}
+      <RaceOrderSettingsModal
+        isOpen={isRaceOrderModalOpen}
+        onClose={() => setIsRaceOrderModalOpen(false)}
+        currentOrder={raceOrder}
+        allDetectedRaces={allDetectedRaces}
+        onSave={handleSaveRaceOrder}
+        updatedAt={raceOrderUpdatedAt}
+      />
     </div>
   );
 }

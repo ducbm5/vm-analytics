@@ -18,6 +18,49 @@ async function startServer() {
     res.json({ token: "898989" });
   });
 
+  const RACE_ORDER_FILE = path.join(process.cwd(), "race-order.json");
+  const DEFAULT_RACE_ORDER = [
+    "NA26", "QN26", "VT26", "NT26", "PT26",
+    "SS26", "DN26", "CT26", "CG26", "OM24",
+    "HUE26", "HCM26", "AS26", "HP25", "HN25",
+    "CT25", "NT25", "DN25", "QN25", "HL25",
+    "NA25", "AS25", "HUE25", "HCM25"
+  ];
+
+  // API route to get synchronized race order
+  app.get("/api/race-order", async (req, res) => {
+    try {
+      const fileData = await fs.readFile(RACE_ORDER_FILE, "utf-8");
+      const parsed = JSON.parse(fileData);
+      if (Array.isArray(parsed.order)) {
+        return res.json({ order: parsed.order, updatedAt: parsed.updatedAt || null });
+      }
+    } catch (err) {
+      // File not found or read error, fallback to default
+    }
+    res.json({ order: DEFAULT_RACE_ORDER, updatedAt: null });
+  });
+
+  // API route to save synchronized race order
+  app.post("/api/race-order", async (req, res) => {
+    try {
+      const { order } = req.body;
+      if (!Array.isArray(order)) {
+        return res.status(400).json({ error: "Order must be an array of race names." });
+      }
+      const cleanOrder = order.map((r: any) => String(r).trim().toUpperCase()).filter(Boolean);
+      const payload = {
+        order: cleanOrder,
+        updatedAt: new Date().toISOString()
+      };
+      await fs.writeFile(RACE_ORDER_FILE, JSON.stringify(payload, null, 2), "utf-8");
+      res.json({ success: true, order: cleanOrder, updatedAt: payload.updatedAt });
+    } catch (err: any) {
+      console.error("Error saving race order:", err);
+      res.status(500).json({ error: "Failed to save race order: " + err.message });
+    }
+  });
+
   // Google Sheet TSV URLs by year
   const SHEET_URLS: Record<string, string> = {
     "2026": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQRJBVKWZmPFfnWYSPbIa_-aSNI0XJ2xk-TJ0Syo1VcqhjzcMZaK9GwhFIhkPqVQpQ2zQIO4fVa5G_F/pub?gid=0&single=true&output=tsv",
