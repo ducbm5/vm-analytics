@@ -32,32 +32,183 @@ async function startServer() {
     try {
       const fileData = await fs.readFile(RACE_ORDER_FILE, "utf-8");
       const parsed = JSON.parse(fileData);
-      if (Array.isArray(parsed.order)) {
-        return res.json({ order: parsed.order, updatedAt: parsed.updatedAt || null });
+      let order = parsed.order || DEFAULT_RACE_ORDER;
+      const googleScriptUrl = parsed.googleScriptUrl || "";
+      const googleSheetTsvUrl = parsed.googleSheetTsvUrl || "";
+      let updatedAt = parsed.updatedAt || null;
+      let syncSource = "local";
+
+      // If user has configured Google Sheet TSV URL, fetch fresh race order from it
+      if (googleSheetTsvUrl && typeof googleSheetTsvUrl === "string" && googleSheetTsvUrl.trim().startsWith("http")) {
+        try {
+          const tsvRes = await axios.get(googleSheetTsvUrl.trim(), { timeout: 8000 });
+          if (tsvRes.data && typeof tsvRes.data === "string") {
+            const lines = tsvRes.data.split("\n").map((l: string) => l.trim()).filter(Boolean);
+            const parsedCodes: string[] = [];
+            for (let i = 0; i < lines.length; i++) {
+              const cols = lines[i].split(/[\t,]/);
+              const code = cols[0]?.trim().toUpperCase();
+              if (i === 0 && (code === "RACE_CODE" || code === "RACE" || code === "MÃ" || code === "MÃ GIẢI" || code === "MÃ_GIẢI")) {
+                continue;
+              }
+              if (code && code.length >= 2 && !parsedCodes.includes(code)) {
+                parsedCodes.push(code);
+              }
+            }
+            if (parsedCodes.length > 0) {
+              order = parsedCodes;
+              syncSource = "google_sheet_tsv";
+            }
+          }
+        } catch (tsvErr: any) {
+          console.warn("Could not fetch race order from Google Sheet TSV:", tsvErr.message);
+        }
+      }
+
+      if (Array.isArray(order) && order.length > 0) {
+        return res.json({ 
+          order, 
+          googleScriptUrl, 
+          googleSheetTsvUrl, 
+          updatedAt, 
+          syncSource 
+        });
       }
     } catch (err) {
       // File not found or read error, fallback to default
     }
-    res.json({ order: DEFAULT_RACE_ORDER, updatedAt: null });
+    res.json({ 
+      order: DEFAULT_RACE_ORDER, 
+      googleScriptUrl: "", 
+      googleSheetTsvUrl: "", 
+      updatedAt: null, 
+      syncSource: "default" 
+    });
   });
 
   // API route to save synchronized race order
   app.post("/api/race-order", async (req, res) => {
     try {
-      const { order } = req.body;
+      const { order, googleScriptUrl, googleSheetTsvUrl } = req.body;
       if (!Array.isArray(order)) {
         return res.status(400).json({ error: "Order must be an array of race names." });
       }
       const cleanOrder = order.map((r: any) => String(r).trim().toUpperCase()).filter(Boolean);
+      
+      let googleSheetSyncResult: { success: boolean; message: string } | null = null;
+      const scriptUrl = typeof googleScriptUrl === "string" ? googleScriptUrl.trim() : "";
+      const tsvUrl = typeof googleSheetTsvUrl === "string" ? googleSheetTsvUrl.trim() : "";
+
+      // If Google Apps Script Web App URL is provided, send race order to Google Sheet
+      if (scriptUrl && scriptUrl.startsWith("http")) {
+        try {
+          const scriptRes = await axios.post(
+            scriptUrl,
+            JSON.stringify({ order: cleanOrder, action: "saveOrder" }),
+            {
+              headers: { "Content-Type": "text/plain;charset=utf-8" },
+              timeout: 15000,
+              maxRedirects: 5
+            }
+          );
+          const data = scriptRes.data;
+          googleSheetSyncResult = {
+            success: true,
+            message: (data && data.message) ? data.message : "Đã đồng bộ sang Google Sheet thành công!"
+          };
+        } catch (scriptErr: any) {
+          console.error("Error saving to Google Apps Script:", scriptErr.message);
+          googleSheetSyncResult = {
+            success: false,
+            message: "Lỗi kết nối Google Apps Script: " + (scriptErr.response?.data?.message || scriptErr.message)
+          };
+        }
+      }
+
       const payload = {
         order: cleanOrder,
-        updatedAt: new Date().toISOString()
+        googleScriptUrl: scriptUrl,
+        googleSheetTsvUrl: tsvUrl,
+        updatedAt: new Date().toISOString(),
+        googleSheetSyncResult
       };
+
       await fs.writeFile(RACE_ORDER_FILE, JSON.stringify(payload, null, 2), "utf-8");
-      res.json({ success: true, order: cleanOrder, updatedAt: payload.updatedAt });
+      
+      res.json({ 
+        success: true, 
+        order: cleanOrder, 
+        googleScriptUrl: scriptUrl,
+        googleSheetTsvUrl: tsvUrl,
+        updatedAt: payload.updatedAt,
+        googleSheetSyncResult
+      });
     } catch (err: any) {
       console.error("Error saving race order:", err);
       res.status(500).json({ error: "Failed to save race order: " + err.message });
+    }
+  });
+
+  // API route to pull latest order from Google Apps Script or TSV
+  app.post("/api/race-order/pull", async (req, res) => {
+    try {
+      const fileData = await fs.readFile(RACE_ORDER_FILE, "utf-8");
+      const parsed = JSON.parse(fileData);
+      const scriptUrl = req.body.googleScriptUrl || parsed.googleScriptUrl || "";
+      const tsvUrl = req.body.googleSheetTsvUrl || parsed.googleSheetTsvUrl || "";
+
+      let pulledOrder: string[] = [];
+      let source = "";
+
+      // 1. Try TSV if available
+      if (tsvUrl && typeof tsvUrl === "string" && tsvUrl.trim().startsWith("http")) {
+        try {
+          const tsvRes = await axios.get(tsvUrl.trim(), { timeout: 8000 });
+          if (tsvRes.data && typeof tsvRes.data === "string") {
+            const lines = tsvRes.data.split("\n").map((l: string) => l.trim()).filter(Boolean);
+            for (let i = 0; i < lines.length; i++) {
+              const cols = lines[i].split(/[\t,]/);
+              const code = cols[0]?.trim().toUpperCase();
+              if (i === 0 && (code === "RACE_CODE" || code === "RACE" || code === "MÃ" || code === "MÃ GIẢI")) continue;
+              if (code && code.length >= 2 && !pulledOrder.includes(code)) {
+                pulledOrder.push(code);
+              }
+            }
+            if (pulledOrder.length > 0) source = "tsv";
+          }
+        } catch (e: any) {
+          console.warn("TSV pull error:", e.message);
+        }
+      }
+
+      // 2. Try Apps Script GET if TSV didn't produce
+      if (pulledOrder.length === 0 && scriptUrl && typeof scriptUrl === "string" && scriptUrl.trim().startsWith("http")) {
+        try {
+          const getRes = await axios.get(scriptUrl.trim(), { timeout: 10000, maxRedirects: 5 });
+          if (getRes.data && Array.isArray(getRes.data.order) && getRes.data.order.length > 0) {
+            pulledOrder = getRes.data.order.map((c: any) => String(c).trim().toUpperCase()).filter(Boolean);
+            source = "google_apps_script";
+          }
+        } catch (e: any) {
+          console.warn("Script GET pull error:", e.message);
+        }
+      }
+
+      if (pulledOrder.length > 0) {
+        const payload = {
+          ...parsed,
+          order: pulledOrder,
+          googleScriptUrl: scriptUrl,
+          googleSheetTsvUrl: tsvUrl,
+          updatedAt: new Date().toISOString()
+        };
+        await fs.writeFile(RACE_ORDER_FILE, JSON.stringify(payload, null, 2), "utf-8");
+        return res.json({ success: true, order: pulledOrder, source, count: pulledOrder.length });
+      }
+
+      res.status(404).json({ error: "Không thể lấy thứ tự giải từ Google Sheet. Vui lòng kiểm tra lại URL." });
+    } catch (err: any) {
+      res.status(500).json({ error: "Lỗi đồng bộ từ Google Sheet: " + err.message });
     }
   });
 

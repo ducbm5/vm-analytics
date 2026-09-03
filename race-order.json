@@ -25,5 +25,11 @@
     "HUE25",
     "HCM25"
   ],
-  "updatedAt": "2026-09-02T21:00:00.000Z"
+  "googleScriptUrl": "https://script.google.com/macros/s/AKfycbxxP1amqLWOVLWEwAYNV5t74PN-iAEoK320DgTdhxtD0F-UNRYH7S1Xt6bISPBsRiGE/exec",
+  "googleSheetTsvUrl": "",
+  "updatedAt": "2026-09-03T06:55:20.895Z",
+  "googleSheetSyncResult": {
+    "success": true,
+    "message": "Đã lưu thành công 24"
+  }
 }

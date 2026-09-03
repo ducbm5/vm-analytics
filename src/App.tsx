@@ -312,6 +312,8 @@ export default function App() {
   // Synchronized Cross-Device Race Ordering
   const [raceOrder, setRaceOrder] = useState<string[]>(DEFAULT_RACE_ORDER);
   const [raceOrderUpdatedAt, setRaceOrderUpdatedAt] = useState<string | null>(null);
+  const [googleScriptUrl, setGoogleScriptUrl] = useState<string>("");
+  const [googleSheetTsvUrl, setGoogleSheetTsvUrl] = useState<string>("");
   const [isRaceOrderModalOpen, setIsRaceOrderModalOpen] = useState(false);
 
   const fetchRaceOrder = async () => {
@@ -320,18 +322,29 @@ export default function App() {
       if (res.data?.order && Array.isArray(res.data.order)) {
         setRaceOrder(res.data.order);
         setRaceOrderUpdatedAt(res.data.updatedAt || null);
+        if (typeof res.data.googleScriptUrl === "string") setGoogleScriptUrl(res.data.googleScriptUrl);
+        if (typeof res.data.googleSheetTsvUrl === "string") setGoogleSheetTsvUrl(res.data.googleSheetTsvUrl);
       }
     } catch (err) {
       console.error("Lỗi lấy thứ tự giải từ máy chủ:", err);
     }
   };
 
-  const handleSaveRaceOrder = async (newOrder: string[]) => {
-    const res = await axios.post("/api/race-order", { order: newOrder });
+  const handleSaveRaceOrder = async (newOrder: string[], scriptUrl?: string, tsvUrl?: string) => {
+    const sUrl = scriptUrl !== undefined ? scriptUrl : googleScriptUrl;
+    const tUrl = tsvUrl !== undefined ? tsvUrl : googleSheetTsvUrl;
+    const res = await axios.post("/api/race-order", { 
+      order: newOrder,
+      googleScriptUrl: sUrl,
+      googleSheetTsvUrl: tUrl
+    });
     if (res.data?.order && Array.isArray(res.data.order)) {
       setRaceOrder(res.data.order);
       setRaceOrderUpdatedAt(res.data.updatedAt || null);
+      if (typeof res.data.googleScriptUrl === "string") setGoogleScriptUrl(res.data.googleScriptUrl);
+      if (typeof res.data.googleSheetTsvUrl === "string") setGoogleSheetTsvUrl(res.data.googleSheetTsvUrl);
     }
+    return res.data;
   };
 
   const compareRaces = useCallback((raceA: string, raceB: string, dir: "asc" | "desc" = "asc"): number => {
@@ -2699,6 +2712,8 @@ export default function App() {
         allDetectedRaces={allDetectedRaces}
         onSave={handleSaveRaceOrder}
         updatedAt={raceOrderUpdatedAt}
+        initialGoogleScriptUrl={googleScriptUrl}
+        initialGoogleSheetTsvUrl={googleSheetTsvUrl}
       />
     </div>
   );
