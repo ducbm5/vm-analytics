@@ -310,10 +310,31 @@ export default function App() {
   }, [loadedData]);
 
   // Synchronized Cross-Device Race Ordering
-  const [raceOrder, setRaceOrder] = useState<string[]>(DEFAULT_RACE_ORDER);
+  const [raceOrder, setRaceOrder] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("vm_race_order");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return DEFAULT_RACE_ORDER;
+  });
   const [raceOrderUpdatedAt, setRaceOrderUpdatedAt] = useState<string | null>(null);
-  const [googleScriptUrl, setGoogleScriptUrl] = useState<string>("");
-  const [googleSheetTsvUrl, setGoogleSheetTsvUrl] = useState<string>("");
+  const [googleScriptUrl, setGoogleScriptUrl] = useState<string>(() => {
+    try {
+      return localStorage.getItem("vm_google_script_url") || "https://script.google.com/macros/s/AKfycbxxP1amqLWOVLWEwAYNV5t74PN-iAEoK320DgTdhxtD0F-UNRYH7S1Xt6bISPBsRiGE/exec";
+    } catch (e) {
+      return "https://script.google.com/macros/s/AKfycbxxP1amqLWOVLWEwAYNV5t74PN-iAEoK320DgTdhxtD0F-UNRYH7S1Xt6bISPBsRiGE/exec";
+    }
+  });
+  const [googleSheetTsvUrl, setGoogleSheetTsvUrl] = useState<string>(() => {
+    try {
+      return localStorage.getItem("vm_google_sheet_tsv_url") || "";
+    } catch (e) {
+      return "";
+    }
+  });
   const [isRaceOrderModalOpen, setIsRaceOrderModalOpen] = useState(false);
 
   const fetchRaceOrder = async () => {
@@ -324,27 +345,79 @@ export default function App() {
         setRaceOrderUpdatedAt(res.data.updatedAt || null);
         if (typeof res.data.googleScriptUrl === "string") setGoogleScriptUrl(res.data.googleScriptUrl);
         if (typeof res.data.googleSheetTsvUrl === "string") setGoogleSheetTsvUrl(res.data.googleSheetTsvUrl);
+        return;
       }
     } catch (err) {
-      console.error("Lỗi lấy thứ tự giải từ máy chủ:", err);
+      console.warn("API /api/race-order không khả dụng hoặc trả về 404 (chế độ Static Host/GitHub Pages), thử đồng bộ trực tiếp từ Google Apps Script...");
+    }
+
+    // Fallback: If server is 404 (e.g. GitHub Pages or Vercel static build), fetch directly from Apps Script
+    const scriptToFetch = googleScriptUrl || "https://script.google.com/macros/s/AKfycbxxP1amqLWOVLWEwAYNV5t74PN-iAEoK320DgTdhxtD0F-UNRYH7S1Xt6bISPBsRiGE/exec";
+    if (scriptToFetch && scriptToFetch.startsWith("http")) {
+      try {
+        const scriptRes = await axios.get(scriptToFetch, { timeout: 8000 });
+        if (scriptRes.data && Array.isArray(scriptRes.data.order) && scriptRes.data.order.length > 0) {
+          const freshOrder = scriptRes.data.order.map((c: any) => String(c).trim().toUpperCase()).filter(Boolean);
+          setRaceOrder(freshOrder);
+          setRaceOrderUpdatedAt(new Date().toISOString());
+          try {
+            localStorage.setItem("vm_race_order", JSON.stringify(freshOrder));
+          } catch (e) {}
+        }
+      } catch (scriptErr: any) {
+        console.warn("Direct Google Apps Script fetch also failed:", scriptErr.message);
+      }
     }
   };
 
   const handleSaveRaceOrder = async (newOrder: string[], scriptUrl?: string, tsvUrl?: string) => {
     const sUrl = scriptUrl !== undefined ? scriptUrl : googleScriptUrl;
     const tUrl = tsvUrl !== undefined ? tsvUrl : googleSheetTsvUrl;
-    const res = await axios.post("/api/race-order", { 
-      order: newOrder,
-      googleScriptUrl: sUrl,
-      googleSheetTsvUrl: tUrl
-    });
-    if (res.data?.order && Array.isArray(res.data.order)) {
-      setRaceOrder(res.data.order);
-      setRaceOrderUpdatedAt(res.data.updatedAt || null);
-      if (typeof res.data.googleScriptUrl === "string") setGoogleScriptUrl(res.data.googleScriptUrl);
-      if (typeof res.data.googleSheetTsvUrl === "string") setGoogleSheetTsvUrl(res.data.googleSheetTsvUrl);
+
+    // Save to local storage first for resilient client-side persistence (e.g. GitHub Pages / Vercel / Cloud Run)
+    try {
+      localStorage.setItem("vm_race_order", JSON.stringify(newOrder));
+      if (sUrl) localStorage.setItem("vm_google_script_url", sUrl);
+      if (tUrl) localStorage.setItem("vm_google_sheet_tsv_url", tUrl);
+    } catch (e) {
+      // LocalStorage error ignore
     }
-    return res.data;
+
+    setRaceOrder(newOrder);
+    setRaceOrderUpdatedAt(new Date().toISOString());
+
+    // Send to backend API if available
+    try {
+      const res = await axios.post("/api/race-order", { 
+        order: newOrder,
+        googleScriptUrl: sUrl,
+        googleSheetTsvUrl: tUrl
+      });
+      if (res.data?.order && Array.isArray(res.data.order)) {
+        setRaceOrder(res.data.order);
+        setRaceOrderUpdatedAt(res.data.updatedAt || null);
+        if (typeof res.data.googleScriptUrl === "string") setGoogleScriptUrl(res.data.googleScriptUrl);
+        if (typeof res.data.googleSheetTsvUrl === "string") setGoogleSheetTsvUrl(res.data.googleSheetTsvUrl);
+      }
+      return res.data;
+    } catch (apiErr: any) {
+      // If server returns 404 (e.g. deployed as pure static site on GitHub Pages / Vercel without Node backend)
+      // Directly sync with Google Apps Script Web App from the browser!
+      console.warn("Server API /api/race-order not available or 404. Falling back to direct Google Apps Script call.", apiErr.message);
+      if (sUrl && sUrl.startsWith("http")) {
+        try {
+          await axios.post(
+            sUrl,
+            JSON.stringify({ order: newOrder, action: "saveOrder" }),
+            { headers: { "Content-Type": "text/plain;charset=utf-8" } }
+          );
+          return { success: true, order: newOrder, googleSheetSyncResult: { success: true, message: "Đã lưu vào Google Sheet!" } };
+        } catch (scriptErr: any) {
+          console.warn("Direct Google Apps Script call failed:", scriptErr.message);
+        }
+      }
+      return { success: true, order: newOrder };
+    }
   };
 
   const compareRaces = useCallback((raceA: string, raceB: string, dir: "asc" | "desc" = "asc"): number => {

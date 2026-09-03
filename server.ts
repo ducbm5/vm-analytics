@@ -20,12 +20,11 @@ async function startServer() {
 
   const RACE_ORDER_FILE = path.join(process.cwd(), "race-order.json");
   const DEFAULT_RACE_ORDER = [
-    "NA26", "QN26", "VT26", "NT26", "PT26",
-    "SS26", "DN26", "CT26", "CG26", "OM24",
-    "HUE26", "HCM26", "AS26", "HP25", "HN25",
-    "CT25", "NT25", "DN25", "QN25", "HL25",
+    "HP26", "DN26", "NA26", "QN26", "VT26", "NT26", "PT26", "SS26", "CT26", "CG26", "OM24",
+    "HUE26", "HCM26", "AS26", "HP25", "HN25", "CT25", "NT25", "DN25", "QN25", "HL25",
     "NA25", "AS25", "HUE25", "HCM25"
   ];
+  const DEFAULT_GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxxP1amqLWOVLWEwAYNV5t74PN-iAEoK320DgTdhxtD0F-UNRYH7S1Xt6bISPBsRiGE/exec";
 
   // API route to get synchronized race order
   app.get("/api/race-order", async (req, res) => {
@@ -90,7 +89,7 @@ async function startServer() {
     }
     res.json({ 
       order: DEFAULT_RACE_ORDER, 
-      googleScriptUrl: "", 
+      googleScriptUrl: DEFAULT_GOOGLE_SCRIPT_URL, 
       googleSheetTsvUrl: "", 
       updatedAt: null, 
       syncSource: "default" 

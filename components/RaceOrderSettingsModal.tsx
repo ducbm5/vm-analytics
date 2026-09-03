@@ -23,14 +23,8 @@ import {
   AlertCircle
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-export const DEFAULT_RACE_ORDER = [
-  "NA26", "QN26", "VT26", "NT26", "PT26",
-  "SS26", "DN26", "CT26", "CG26", "OM24",
-  "HUE26", "HCM26", "AS26", "HP25", "HN25",
-  "CT25", "NT25", "DN25", "QN25", "HL25",
-  "NA25", "AS25", "HUE25", "HCM25"
-];
+import { DEFAULT_RACE_ORDER } from "@/constants/raceOrder";
+export { DEFAULT_RACE_ORDER };
 
 interface RaceOrderSettingsModalProps {
   isOpen: boolean;
