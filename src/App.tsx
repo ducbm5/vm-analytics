@@ -268,6 +268,22 @@ const parseTsvData = (tsvData: string): Participant[] => {
 };
 
 const fetchYearData = async (year: string): Promise<Participant[]> => {
+  // 1. Luôn ưu tiên gọi qua backend API proxy (/api/marathon-data)
+  // Proxy này chạy trên Vercel Serverless Function (api/marathon-data.ts) hoặc Express backend (server.ts).
+  // Nhờ vậy, Secret Key và Google Apps Script URL được bảo vệ an toàn 100% trên server,
+  // người dùng mở F12 DevTools ở client hoàn toàn KHÔNG THỂ thấy key hay link script!
+  try {
+    const res = await axios.get(`/api/marathon-data?year=${encodeURIComponent(year)}`, {
+      timeout: 35000
+    });
+    if (res.data && Array.isArray(res.data) && res.data.length > 0) {
+      return res.data;
+    }
+  } catch (apiErr: any) {
+    console.warn(`Gọi /api/marathon-data cho năm ${year} không thành công, thử tải trực tiếp...`, apiErr.message);
+  }
+
+  // 2. Dự phòng: Tải trực tiếp nếu host tĩnh
   const sheetKey = getSheetKeyForYear(year);
   const url = SHEET_URLS[sheetKey];
   if (!url) return [];

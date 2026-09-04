@@ -223,8 +223,9 @@ async function startServer() {
   });
 
   // Google Sheet TSV URLs by year
+  const SECRET_ACCESS_KEY = process.env.APPS_SCRIPT_KEY || "ducbm900966559155";
   const SHEET_URLS: Record<string, string> = {
-    "2026": "https://script.google.com/macros/s/AKfycbwm9XwqLMyFurcmxGsrS2REsW0Vj8tkhY8rEGCm-emKJ_mnwPILper8krABUs8ddqzuDw/exec",
+    "2026": `https://script.google.com/macros/s/AKfycbwm9XwqLMyFurcmxGsrS2REsW0Vj8tkhY8rEGCm-emKJ_mnwPILper8krABUs8ddqzuDw/exec?key=${SECRET_ACCESS_KEY}`,
     "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTo87xTtp5O_M6MybyxLFCea6ZdUie-dUW1IJFURUeCxjIYOadAITO0erURBImxPGa1EVNeGS61IGLQ/pub?gid=0&single=true&output=tsv",
     "2019-2024": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTp_JE6mxA6rQyrQ6coXbYmeL2DVozUC9PbYDMkywZ-1R5kVo7N9cd_-53Bw4uLoWb1jzpbqqjsx6xN/pub?gid=0&single=true&output=tsv"
   };
@@ -238,9 +239,24 @@ async function startServer() {
       if (!isNaN(yrNum) && yrNum >= 2019 && yrNum <= 2024) {
         key = "2019-2024";
       }
-      const url = SHEET_URLS[key] || SHEET_URLS["2026"];
-      const response = await axios.get(url);
-      const tsvData = response.data;
+      let url = SHEET_URLS[key] || SHEET_URLS["2026"];
+      let response = await axios.get(url, { timeout: 25000 });
+      let tsvData = response.data;
+
+      // If Google Apps Script returned 403 (because user hasn't deployed new key yet), try secondary key
+      if (typeof tsvData === "string" && tsvData.includes("403 Forbidden") && key === "2026") {
+        const fallbackUrl = `https://script.google.com/macros/s/AKfycbwm9XwqLMyFurcmxGsrS2REsW0Vj8tkhY8rEGCm-emKJ_mnwPILper8krABUs8ddqzuDw/exec?key=vm_analytics_secret_2026_@key`;
+        try {
+          const fallbackRes = await axios.get(fallbackUrl, { timeout: 25000 });
+          if (typeof fallbackRes.data === "string" && !fallbackRes.data.includes("403 Forbidden")) {
+            tsvData = fallbackRes.data;
+          }
+        } catch (e) {}
+      }
+
+      if (typeof tsvData !== "string" || tsvData.includes("403 Forbidden")) {
+        return res.status(500).json({ error: "Invalid TSV data or Access Denied from Google Apps Script" });
+      }
       
       // Simple TSV to JSON parser
       const lines = tsvData.split("\n");
